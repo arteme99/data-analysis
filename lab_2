@@ -1,0 +1,297 @@
+import pandas as pd
+import numpy as np
+from google.colab import drive
+import missingno as msno
+from matplotlib import pyplot as plt
+import seaborn as sns
+from tqdm.notebook import tqdm
+from scipy import stats
+from sklearn.preprocessing import normalize
+from scipy.stats import kstest, chisquare # tests
+from scipy.stats import gamma, beta, norm, lognorm # distributions
+drive.mount('/content/drive')
+
+data = pd.read_csv("/content/drive/MyDrive/MDALabs/lab1/data/train_timeseries/train_timeseries.csv").sample(1000000)
+
+data.shape
+def delete_extreme_p(data):
+    q1, q3 = np.percentile(data, [25, 75])
+    iqr = q3 - q1
+    under_border, top_border = q1 - 1.5*iqr, q3 + 1.5*iqr
+    data = data[data > under_border]
+    data = data[data < top_border]
+    return data
+  
+chosen_columns = ['PRECTOT', 'PS', 'T2MDEW', 'T2M_RANGE', 'WS10M', 'T2M', 'QV2M', 'T2MWET']
+
+data.head()
+
+for col in data.columns[2:]:
+    sns.distplot(data[col])
+    plt.title(col)
+    plt.show()
+ 
+for col in chosen_columns:
+  print(col)
+  print(np.var(data[col]))
+  
+for col in chosen_columns:
+  print(col)
+  print(np.mean(data[col]))
+  
+for col in chosen_columns:
+   sns.boxplot(delete_extreme_p(data[col]))
+   plt.title(col)
+   plt.show()
+  
+data.sample(1)[chosen_columns]
+
+plt.figure(figsize=(40, 40))
+pd.plotting.scatter_matrix(data.sample(100)[chosen_columns], diagonal="kde")
+plt.tight_layout()
+plt.show()
+
+fig = plt.figure(figsize=(30, 30))
+
+k = 1
+for i, col_x in tqdm(enumerate(chosen_columns)):
+    for j, col_y in tqdm(enumerate(chosen_columns), leave=False):
+        ax = fig.add_subplot(len(chosen_columns), len(chosen_columns), k, projection='3d')
+        ax.set_title(f'{col_x} to {col_y}')
+        X = data[col_x]
+        Y = data[col_y]
+        hist, x_bins, y_bins = np.histogram2d(X, Y)
+
+        X, Y = np.meshgrid(x_bins[:-1], y_bins[:-1])
+        Z = hist
+
+        # Plot the surface.
+        surf = ax.plot_surface(X, Y, Z, 
+                               cmap=plt.cm.get_cmap('coolwarm'), 
+                               rstride=1, cstride=1, alpha=0.5)
+        cset = ax.contourf(X, Y, Z, zdir='z', offset=Z.min(), cmap=plt.cm.get_cmap('coolwarm'))
+        k += 1
+plt.show()
+
+def pair_correlation(x, y):
+    r, p = stats.pearsonr(x,y)
+    r_z = np.arctanh(r)
+
+    se = 1/np.sqrt(x.size-3)
+    alpha = 0.05
+    z = stats.norm.ppf(1-alpha/2)
+    lo_z, hi_z = r_z-z*se, r_z+z*se
+
+    return r, p, lo_z, hi_z
+
+p_vals
+
+i, j = 0, 1
+coeffs[i][j], lo_zs[i][j], hi_zs[i][j], p_vals[i][j], hi_zs[i][j] - lo_zs[i][j]
+
+_, ax = plt.subplots(4, 2, figsize=(13, 20))
+k = 0
+for i in range(4):
+    for j in range(2):
+        ax[i][j].set_title(col)
+
+        err = hi_zs[k] - lo_zs[k]
+        ax[i][j].barh(chosen_columns, coeffs[k], xerr=err)
+        k += 1
+plt.show()
+
+plt.imshow(coeffs)
+
+def corr(arr1, arr2):
+    mean1 = arr1.mean()
+    mean2 = arr2.mean()
+    return np.round(np.sum((arr1 - mean1) * (arr2 - mean2)) /
+                    np.sqrt(np.sum((arr1 - mean1)**2)*np.sum((arr2 - mean2)**2)), 2)
+                    
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.model_selection import train_test_split
+
+dataset = data[chosen_columns]
+correlation_matrix = dataset.corr()
+mask = np.zeros_like(correlation_matrix, dtype=np.bool)
+mask[np.triu_indices_from(mask)] = True
+
+f, ax = plt.subplots(figsize=(10, 10))
+
+sns.heatmap(correlation_matrix, mask = mask, annot=True, fmt= '.2f', ax = ax, cmap = 'Blues')
+plt.show()
+
+X_columns = ['PRECTOT', 'PS', 'WS10M', 'T2M_RANGE', 'T2M', 'QV2M', 'T2MDEW']
+Y_columns = ['T2MWET'] 
+
+X = normalize(data[X_columns])
+y = data[Y_columns]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=42)
+
+x = [i for i in range(len(y_test))]
+
+linreg = LinearRegression().fit(X_train, y_train)
+y_pred = linreg.predict(X_test)
+params = np.append(linreg.intercept_, linreg.coef_)
+
+predicted = y_pred
+real = y_test.to_numpy()
+
+mae = mean_absolute_error(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+print('Mean absolute error = ', mae)
+print('Mean squared error = ', mse)
+
+def mean_absolute_percentage_error(y_true, y_pred): 
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+#mape = mean_absolute_percentage_error(real, predicted)
+#print('Mean absolute percentage error = ', mape)
+
+min_, max_ = min( predicted.min(), real.min() ), max( predicted.max(), real.max() )
+
+plt.figure(figsize=(5, 5), dpi=80)
+plt.xlim(min_, max_)
+plt.ylim(real.min(), max( predicted.max(), real.max() ))
+plt.title(f"LinRegress T2MWET, R2 = {r2_score(real, predicted):.2f}, corr = {corr(real, predicted):.2f}", fontsize=20)
+plt.scatter(predicted, real, s=4, c='r')
+plt.plot([min_, max_], [min_, max_], 'b--')
+plt.gca().set_aspect(1)
+plt.xlabel("Predicted", fontsize=15)
+plt.ylabel("Truth", fontsize=15)
+plt.show()
+
+# Plotting a quantile biplot based on real and predicted values
+percs = np.linspace(0, 100, 21)
+qn_first = np.percentile(real, percs)
+qn_second = np.percentile(predicted, percs)
+plt.figure(figsize=(12, 12))
+
+min_qn = np.min([qn_first.min(), qn_second.min()])
+max_qn = np.max([qn_first.max(), qn_second.max()])
+x = np.linspace(min_qn, max_qn)
+
+plt.plot(qn_first, qn_second, ls="", marker="o", markersize=6)
+plt.plot(x, x, color="k", ls="--")
+
+plt.xlabel(u'Real')
+plt.ylabel(u'Prediction')
+
+x = [i for i in range(len(y_test))]
+
+plt.scatter(x, real, label = u'The real meaning of WS10M', alpha=0.5)
+plt.scatter(x, predicted, label = u'Predicted by the linear model', alpha=0.5)
+plt.title(u'Real values of ages and predicted by the linear model')
+plt.legend(loc="center right",borderaxespad=0.1, bbox_to_anchor=(1.7, 0.5))
+plt.xlabel(u'Measurement')
+plt.ylabel(u'WS10M')
+plt.show()
+
+# Visualization of the dependence of features among themselves
+X = data[X_columns]
+y = data[Y_columns]
+scaler = StandardScaler()
+X = pd.DataFrame(scaler.fit_transform(X))
+X.columns = X_columns
+
+fig, axs = plt.subplots(len(X_columns), 1)
+plt.subplots_adjust(wspace=0, hspace=2.5)
+
+for i, col in enumerate(X_columns):
+  axs[i].scatter(X[[col]], y, s = 2)
+  axs[i].set_xlabel(col)
+  axs[i].set_ylabel('y')
+  axs[i].grid(True)
+  
+X_columns = ['PRECTOT', 'PS', 'T2MWET', 'T2M_RANGE', 'T2M', 'QV2M', 'T2MDEW']
+Y_columns = ['WS10M']
+
+X = normalize(data[X_columns])
+y = data[Y_columns]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=42)
+
+x = [i for i in range(len(y_test))]
+
+linreg = LinearRegression().fit(X_train, y_train)
+y_pred = linreg.predict(X_test)
+params = np.append(linreg.intercept_, linreg.coef_)
+
+predicted = y_pred
+real = y_test.to_numpy()
+
+mae = mean_absolute_error(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+print('Mean absolute error = ', mae)
+print('Mean squared error = ', mse)
+
+def mean_absolute_percentage_error(y_true, y_pred): 
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+mape = mean_absolute_percentage_error(real, predicted)
+print('Mean absolute percentage error = ', mape)
+
+min_, max_ = min( predicted.min(), real.min() ), max( predicted.max(), real.max() )
+
+plt.figure(figsize=(5, 5), dpi=80)
+plt.xlim(min_, max_)
+plt.ylim(real.min(), max( predicted.max(), real.max() ))
+plt.title(f"LinRegress WS10M, R2 = {r2_score(real, predicted):.2f}, corr = {corr(real, predicted):.2f}", fontsize=20)
+plt.scatter(predicted, real, s=4, c='r')
+plt.plot([min_, max_], [min_, max_], 'b--')
+plt.gca().set_aspect(1)
+plt.xlabel("Predicted", fontsize=15)
+plt.ylabel("Truth", fontsize=15)
+plt.show()
+
+# Plotting a quantile biplot based on real and predicted values
+percs = np.linspace(0, 100, 21)
+qn_first = np.percentile(real, percs)
+qn_second = np.percentile(predicted, percs)
+plt.figure(figsize=(12, 12))
+
+min_qn = np.min([qn_first.min(), qn_second.min()])
+max_qn = np.max([qn_first.max(), qn_second.max()])
+x = np.linspace(min_qn, max_qn)
+
+plt.plot(qn_first, qn_second, ls="", marker="o", markersize=6)
+plt.plot(x, x, color="k", ls="--")
+
+plt.xlabel(u'Real')
+plt.ylabel(u'Prediction')
+
+x = [i for i in range(len(y_test))]
+
+plt.scatter(x, real, label = u'The real meaning of WS10M', alpha=0.5)
+plt.scatter(x, predicted, label = u'Predicted by the linear model', alpha=0.5)
+plt.title(u'Real values of ages and predicted by the linear model')
+plt.legend(loc="center right",borderaxespad=0.1, bbox_to_anchor=(1.7, 0.5))
+plt.xlabel(u'Measurement')
+plt.ylabel(u'WS10M')
+plt.show()
+
+from sklearn.preprocessing import PolynomialFeatures
+
+poly = PolynomialFeatures(2)
+X_train_new = poly.fit_transform(X_train)
+X_test_new = poly.fit_transform(X_test)
+
+regr = LinearRegression().fit(X_train_new, y_train)
+predicted = regr.predict(X_test_new)
+real = y_test.to_numpy()
+
+min_, max_ = min( predicted.min(), real.min() ), max( predicted.max(), real.max() )
+
+plt.figure(figsize=(5, 5), dpi=80)
+plt.xlim(min_, max_)
+plt.ylim(real.min(), max( predicted.max(), real.max() ))
+plt.title(f"LinRegress WS10M, R2 = {r2_score(real, predicted):.2f}, corr = {corr(real, predicted):.2f}", fontsize=20)
+plt.scatter(predicted, real, s=4, c='r')
+plt.plot([min_, max_], [min_, max_], 'b--')
+plt.gca().set_aspect(1)
+plt.xlabel("Predicted", fontsize=15)
+plt.ylabel("Truth", fontsize=15)
+plt.show()
